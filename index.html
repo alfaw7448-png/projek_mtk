@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MathGraph — Belajar Matematika Interaktif</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<style>
+body{background:#0f172a;color:#e2e8f0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;
+background-image:radial-gradient(circle at 80% -10%,rgba(99,102,241,.18),transparent 40%),radial-gradient(circle at 0% 100%,rgba(6,182,212,.12),transparent 40%);background-attachment:fixed}
+.glow:hover{box-shadow:0 0 20px rgba(6,182,212,.55)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+// ===== math.js =====
+// Logika matematika aman: tanpa eval()
+const fmt = (n) => (Number.isFinite(n) ? String(Math.round(n * 1000) / 1000) : 'tak terdefinisi')
+const ev = (p, x) => p.a * x * x + p.b * x + p.c
+const show = (p) => {
+  const t = []
+  if (p.a) t.push(`${p.a}x²`)
+  if (p.b) t.push(`${p.b}x`)
+  if (p.c || !t.length) t.push(`${p.c}`)
+  return t.join(' + ').replace(/\+ -/g, '- ')
+}
+const sub = (p, v) => {
+  const w = v < 0 ? `(${v})` : `${v}`
+  const t = []
+  if (p.a) t.push(`${p.a}·${w}²`)
+  if (p.b) t.push(`${p.b}·${w}`)
+  if (p.c || !t.length) t.push(`${p.c}`)
+  return t.join(' + ').replace(/\+ -/g, '- ')
+}
+const isLin = (p) => p.a === 0
+
+// Kalkulator: kembalikan langkah + hasil
+function hitung(op, f, g, x) {
+  const s = []
+  const nm = { f: 'f', g: 'g' }
+  const one = (n, p, v) => {
+    const r = ev(p, v)
+    s.push(`${n}(${fmt(v)}) = ${sub(p, v)}`)
+    s.push(`${n}(${fmt(v)}) = ${fmt(r)}`)
+    return r
+  }
+  s.push(`f(x) = ${show(f)},  g(x) = ${show(g)}`)
+  if (op === 'f' || op === 'g') {
+    const r = one(nm[op], op === 'f' ? f : g, x)
+    return { s, r }
+  }
+  if (op === 'fg' || op === 'gf') {
+    const [o, i, on, inn] = op === 'fg' ? [f, g, 'f', 'g'] : [g, f, 'g', 'f']
+    s.push(`(${on} ∘ ${inn})(x) = ${on}(${inn}(x))`)
+    if (isLin(o) && isLin(i)) {
+      const A = o.b * i.b, B = o.b * i.c + o.c
+      s.push(`(${on} ∘ ${inn})(x) = ${o.b}(${show(i)}) + ${o.c} = ${show({ a: 0, b: A, c: B })}`)
+    }
+    s.push(`Langkah 1: hitung ${inn}(${fmt(x)})`)
+    const m = one(inn, i, x)
+    s.push(`Langkah 2: hitung ${on}(${fmt(m)})`)
+    const r = one(on, o, m)
+    return { s, r }
+  }
+  // invers f
+  if (!isLin(f) || f.b === 0) {
+    s.push('Invers sederhana hanya tersedia untuk f linear (a = 0 dan b ≠ 0).')
+    return { s, r: NaN }
+  }
+  s.push(`Misal y = ${show(f)}  →  ${f.b}x = y ${f.c >= 0 ? '-' : '+'} ${Math.abs(f.c)}`)
+  s.push(`x = (y ${f.c >= 0 ? '-' : '+'} ${Math.abs(f.c)}) / ${f.b}  →  f⁻¹(x) = (x ${f.c >= 0 ? '-' : '+'} ${Math.abs(f.c)}) / ${f.b}`)
+  const r = (x - f.c) / f.b
+  s.push(`f⁻¹(${fmt(x)}) = (${fmt(x)} - ${f.c}) / ${f.b} = ${fmt(r)}`)
+  return { s, r }
+}
+
+// Daerah penyelesaian: a*x + b*y <= c, plus x>=0, y>=0
+function feasible(cons) {
+  const all = [{ a: -1, b: 0, c: 0 }, { a: 0, b: -1, c: 0 }, ...cons]
+  const pts = []
+  for (let i = 0; i < all.length; i++)
+    for (let j = i + 1; j < all.length; j++) {
+      const p = all[i], q = all[j]
+      const d = p.a * q.b - q.a * p.b
+      if (Math.abs(d) < 1e-9) continue
+      const x = (p.c * q.b - q.c * p.b) / d, y = (p.a * q.c - q.a * p.c) / d
+      if (all.every((k) => k.a * x + k.b * y <= k.c + 1e-6) && !pts.some((t) => Math.abs(t.x - x) < 1e-6 && Math.abs(t.y - y) < 1e-6)) pts.push({ x, y })
+    }
+  if (!pts.length) return []
+  const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length, cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
+  return pts.sort((p, q) => Math.atan2(p.y - cy, p.x - cx) - Math.atan2(q.y - cy, q.x - cx))
+}
+
+// ===== data.js =====
+const CATS = [
+  { id: 'linear', t: 'Fungsi Linear', f: 'f(x) = ax + b', icon: '📈', c: 'from-cyan-500/20' },
+  { id: 'kuadrat', t: 'Fungsi Kuadrat', f: 'f(x) = ax² + bx + c', icon: '🌙', c: 'from-indigo-500/20' },
+  { id: 'komposisi', t: 'Komposisi & Invers', f: '(f ∘ g)(x), f⁻¹(x)', icon: '🔗', c: 'from-emerald-500/20' },
+  { id: 'pl', t: 'Program Linear', f: 'Z = px + qy', icon: '🎯', c: 'from-rose-500/20' },
+]
+
+const MATERI = {
+  linear: [
+    ['Pengertian', 'Fungsi linear adalah fungsi berbentuk f(x) = ax + b dengan a, b bilangan real dan a ≠ 0. Grafiknya selalu berupa garis lurus.'],
+    ['Gradien (a)', 'Gradien menyatakan kemiringan garis: m = a = (y₂ − y₁) / (x₂ − x₁). Jika a > 0 garis naik, jika a < 0 garis turun.'],
+    ['Titik Potong', 'Titik potong sumbu-y: (0, b). Titik potong sumbu-x: setel f(x) = 0, sehingga x = −b/a, yaitu (−b/a, 0).'],
+    ['Coba Sendiri', 'Geser slider a dan b pada grafik, lalu amati tabel input-output di bawahnya.'],
+  ],
+  kuadrat: [
+    ['Pengertian', 'Fungsi kuadrat berbentuk f(x) = ax² + bx + c dengan a ≠ 0. Grafiknya berupa parabola. Jika a = 0, fungsi berubah menjadi linear!'],
+    ['Arah Parabola', 'a > 0 → terbuka ke atas (nilai minimum). a < 0 → terbuka ke bawah (nilai maksimum).'],
+    ['Sumbu Simetri', 'Garis x = −b / (2a) membagi parabola menjadi dua bagian yang simetris.'],
+    ['Titik Puncak', 'Titik puncak = (−b/(2a), f(−b/(2a))) atau (−b/2a, −D/4a) dengan D = b² − 4ac.'],
+  ],
+  komposisi: [
+    ['Notasi Komposisi', '(f ∘ g)(x) = f(g(x)): kerjakan g lebih dulu, hasilnya dimasukkan ke f. Pada umumnya f ∘ g ≠ g ∘ f.'],
+    ['Contoh: f(x) = x + 3, g(x) = 4x + 5', '(f ∘ g)(x) = f(4x+5) = (4x+5) + 3 = 4x + 8\n(g ∘ f)(x) = g(x+3) = 4(x+3) + 5 = 4x + 17'],
+    ['Langkah Fungsi Invers', '1) Tulis y = f(x).  2) Nyatakan x dalam y.  3) Ganti y dengan x, hasilnya f⁻¹(x).'],
+    ['Contoh Invers: h(x) = 3x − 9', 'y = 3x − 9  →  3x = y + 9  →  x = (y + 9)/3\nJadi h⁻¹(x) = (x + 9)/3. Cek: h(h⁻¹(x)) = 3·(x+9)/3 − 9 = x ✓'],
+    ['Invers f(x) = x + 3 dan g(x) = 4x + 5', 'f⁻¹(x) = x − 3\ng⁻¹(x) = (x − 5)/4\nUji di Kalkulator Pintar untuk mencoba nilai lain.'],
+  ],
+  pl: [
+    ['Variabel Keputusan', 'Besaran yang dicari, misal x = banyak produk A dan y = banyak produk B.'],
+    ['Fungsi Tujuan', 'Z = px + qy: fungsi yang ingin dimaksimumkan (laba) atau diminimumkan (biaya).'],
+    ['Sistem Pertidaksamaan', 'Kendala sumber daya, mis. x + y ≤ 8 dan x + 2y ≤ 10, ditambah syarat x ≥ 0, y ≥ 0.'],
+    ['Daerah Penyelesaian', 'Irisan semua pertidaksamaan (area hijau pada grafik) disebut daerah layak.'],
+    ['Metode Titik Pojok', 'Hitung Z di setiap titik pojok daerah layak. Nilai terbesar = maksimum, terkecil = minimum.'],
+  ],
+}
+
+// [soal, [opsi], indeks benar, pembahasan]
+const QUIZ = {
+  linear: [
+    ['Gradien dari f(x) = 3x − 6 adalah ...', ['−6', '3', '6', '−3'], 1, 'Pada f(x) = ax + b, gradien = a = 3.'],
+    ['Titik potong sumbu-y dari f(x) = 2x + 5 adalah ...', ['(0, 5)', '(5, 0)', '(0, 2)', '(−5/2, 0)'], 0, 'Sumbu-y: x = 0 → f(0) = 5, jadi (0, 5).'],
+    ['Titik potong sumbu-x dari f(x) = 2x − 8 adalah ...', ['(−4, 0)', '(0, −8)', '(4, 0)', '(8, 0)'], 2, '2x − 8 = 0 → x = 4, jadi (4, 0).'],
+    ['Gradien garis melalui (1, 2) dan (3, 8) adalah ...', ['2', '3', '4', '6'], 1, 'm = (8 − 2)/(3 − 1) = 6/2 = 3.'],
+  ],
+  kuadrat: [
+    ['Titik puncak f(x) = x² − 4x + 3 adalah ...', ['(2, −1)', '(−2, 1)', '(2, 1)', '(4, 3)'], 0, 'x = −b/2a = 4/2 = 2; f(2) = 4 − 8 + 3 = −1.'],
+    ['Sumbu simetri f(x) = 2x² + 8x + 1 adalah ...', ['x = 2', 'x = −2', 'x = 4', 'x = −4'], 1, 'x = −8/(2·2) = −2.'],
+    ['Parabola f(x) = −3x² + 1 terbuka ke ...', ['atas', 'bawah', 'kanan', 'kiri'], 1, 'a = −3 < 0 sehingga parabola terbuka ke bawah.'],
+    ['f(x) = (k − 2)x² + 3x + 1 adalah fungsi kuadrat jika ...', ['k = 2', 'k ≠ 2', 'k > 2', 'k = 0'], 1, 'Syarat fungsi kuadrat: a ≠ 0, yaitu k − 2 ≠ 0 → k ≠ 2.'],
+  ],
+  komposisi: [
+    ['Jika f(x) = x + 3 dan g(x) = 4x + 5, maka (f ∘ g)(x) = ...', ['4x + 8', '4x + 17', '4x + 15', 'x + 8'], 0, 'f(g(x)) = (4x + 5) + 3 = 4x + 8.'],
+    ['Dengan f dan g yang sama, (g ∘ f)(x) = ...', ['4x + 8', '4x + 17', '4x + 12', '4x + 5'], 1, 'g(f(x)) = 4(x + 3) + 5 = 4x + 17.'],
+    ['Invers dari h(x) = 3x − 9 adalah ...', ['(x − 9)/3', '3x + 9', '(x + 9)/3', 'x/3 − 9'], 2, 'y = 3x − 9 → x = (y + 9)/3, jadi h⁻¹(x) = (x + 9)/3.'],
+    ['Nilai (f ∘ g)(2) untuk f(x) = x + 3, g(x) = 4x + 5 adalah ...', ['13', '16', '19', '11'], 1, 'g(2) = 13, lalu f(13) = 16.'],
+  ],
+  pl: [
+    ['Titik pojok (0,0), (4,0), (2,2), (0,3). Nilai maks Z = 3x + 2y adalah ...', ['6', '10', '12', '0'], 2, 'Z: 0, 12, 10, 6 → maksimum 12 di (4, 0).'],
+    ['Fungsi tujuan pada program linear adalah ...', ['Syarat x ≥ 0', 'Fungsi yang dimaksimumkan/diminimumkan', 'Garis kendala', 'Titik potong sumbu'], 1, 'Fungsi tujuan (Z) adalah besaran yang dioptimalkan.'],
+    ['Syarat x ≥ 0 dan y ≥ 0 membatasi daerah pada ...', ['Kuadran I', 'Kuadran II', 'Kuadran III', 'Seluruh bidang'], 0, 'x dan y keduanya tak negatif → kuadran I.'],
+    ['Min Z = 2x + 3y di titik (1,4), (3,2), (5,1) adalah ...', ['12', '13', '14', '11'], 0, 'Z: 14, 12, 13 → minimum 12 di (3, 2).'],
+  ],
+}
+
+// ===== ui.jsx =====
+function useLS(k, init) {
+  const [v, s] = useState(() => { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : init } catch { return init } })
+  useEffect(() => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }, [k, v])
+  return [v, s]
+}
+const Card = ({ className = '', children }) => (
+  <div className={`bg-slate-800/50 backdrop-blur border border-slate-700 rounded-xl p-5 ${className}`}>{children}</div>
+)
+const Btn = ({ className = '', ...p }) => (
+  <button {...p} className={`glow transition px-4 py-2 rounded-xl bg-cyan-500 text-slate-900 font-semibold hover:bg-cyan-400 ${className}`} />
+)
+const Ghost = ({ className = '', ...p }) => (
+  <button {...p} className={`transition px-4 py-2 rounded-xl border border-slate-600 text-slate-300 hover:border-cyan-400 hover:text-cyan-300 ${className}`} />
+)
+const Slider = ({ label, value, onChange, min, max, step = 1 }) => (
+  <label className="block text-sm">
+    <div className="flex justify-between text-slate-400"><span>{label}</span><span className="text-cyan-300 font-mono">{Math.round(value * 100) / 100}</span></div>
+    <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(parseFloat(e.target.value))} className="w-full accent-cyan-400" />
+  </label>
+)
+const Num = ({ label, value, onChange }) => (
+  <label className="block text-sm text-slate-400">
+    {label}
+    <input type="number" step="any" value={value} onChange={(e) => onChange(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+      className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-cyan-400" />
+  </label>
+)
+
+// ===== Graph.jsx =====
+const S = 400, R = 10, u = S / (2 * R)
+const px = (x) => S / 2 + x * u, py = (y) => S / 2 - y * u
+// curves: {t:'line',a,b} y=ax+b | {t:'par',a,b,c} | {t:'cons',a,b,c} ax+by=c
+function Graph({ curves = [], marks = [], poly = null }) {
+  const ticks = Array.from({ length: 21 }, (_, i) => i - R)
+  const path = (f) => { let d = ''; for (let x = -R; x <= R + 1e-9; x += 0.1) d += `${d ? 'L' : 'M'}${px(x).toFixed(1)},${py(f(x)).toFixed(1)}`; return d }
+  const col = ['#06b6d4', '#6366f1', '#f43f5e']
+  return (
+    <svg viewBox={`0 0 ${S} ${S}`} className="w-full max-w-lg mx-auto bg-slate-900 rounded-xl border border-slate-700">
+      <defs><clipPath id="clip"><rect width={S} height={S} /></clipPath></defs>
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={px(t)} y1={0} x2={px(t)} y2={S} stroke="#1e293b" strokeWidth="1" />
+          <line x1={0} y1={py(t)} x2={S} y2={py(t)} stroke="#1e293b" strokeWidth="1" />
+          {t % 2 === 0 && t !== 0 && (<><text x={px(t)} y={S / 2 + 12} fontSize="8" fill="#64748b" textAnchor="middle">{t}</text><text x={S / 2 + 4} y={py(t) + 3} fontSize="8" fill="#64748b">{t}</text></>)}
+        </g>
+      ))}
+      <line x1={0} y1={S / 2} x2={S} y2={S / 2} stroke="#94a3b8" /><line x1={S / 2} y1={0} x2={S / 2} y2={S} stroke="#94a3b8" />
+      <text x={S - 10} y={S / 2 - 5} fontSize="11" fill="#94a3b8">x</text><text x={S / 2 + 6} y={12} fontSize="11" fill="#94a3b8">y</text>
+      <g clipPath="url(#clip)">
+        {poly && poly.length > 2 && <polygon points={poly.map((p) => `${px(p.x)},${py(p.y)}`).join(' ')} fill="rgba(16,185,129,.25)" stroke="#10b981" strokeWidth="1.5" />}
+        {curves.map((c, i) => {
+          const k = c.color || col[i % 3]
+          if (c.t === 'par') return <path key={i} d={path((x) => c.a * x * x + c.b * x + c.c)} fill="none" stroke={k} strokeWidth="2.5" />
+          if (c.t === 'line') return <path key={i} d={path((x) => c.a * x + c.b)} fill="none" stroke={k} strokeWidth="2.5" />
+          if (c.b === 0) return <line key={i} x1={px(c.c / c.a)} y1={0} x2={px(c.c / c.a)} y2={S} stroke={k} strokeWidth="2" strokeDasharray="5 3" />
+          return <path key={i} d={path((x) => (c.c - c.a * x) / c.b)} fill="none" stroke={k} strokeWidth="2" strokeDasharray="5 3" />
+        })}
+      </g>
+      {marks.filter((m) => Math.abs(m.x) <= R && Math.abs(m.y) <= R).map((m, i) => (
+        <g key={i}><circle cx={px(m.x)} cy={py(m.y)} r="4" fill="#f43f5e" stroke="#fff" strokeWidth="1" />
+          <text x={px(m.x) + 6} y={py(m.y) - 6} fontSize="9" fill="#fda4af">{m.label || `(${fmt(m.x)}, ${fmt(m.y)})`}</text></g>
+      ))}
+    </svg>
+  )
+}
+
+// ===== Pages.jsx =====
+
+const H = ({ children, sub }) => (<div className="mb-6"><h1 className="text-2xl md:text-3xl font-bold text-white">{children}</h1>{sub && <p className="text-slate-400 mt-1">{sub}</p>}</div>)
+
+const pct = (p) => Math.round(((Object.keys(p.read).length + Object.keys(p.quiz).length) / 8) * 100)
+const poin = (p) => Object.values(p.quiz).reduce((a, q) => a + q.best * 10, 0)
+
+function Dashboard({ prog, go }) {
+  const Stat = ({ l, v, c }) => (<Card><div className="text-slate-400 text-sm">{l}</div><div className={`text-3xl font-bold ${c}`}>{v}</div></Card>)
+  return (<>
+    <H sub="Lanjutkan perjalanan belajarmu hari ini.">Halo, {prog.name}! 👋</H>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      <Stat l="Progres Selesai" v={`${pct(prog)}%`} c="text-cyan-300" />
+      <Stat l="Poin Latihan" v={poin(prog)} c="text-indigo-300" />
+      <Stat l="Materi Aktif" v={`${Object.keys(prog.read).length}/4`} c="text-emerald-300" />
+    </div>
+    <div className="h-2 bg-slate-800 rounded-full mb-8 overflow-hidden"><div className="h-full bg-gradient-to-r from-cyan-400 to-indigo-500 transition-all" style={{ width: `${pct(prog)}%` }} /></div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      {CATS.map((c) => (
+        <button key={c.id} onClick={() => go('materi', c.id)} className={`text-left bg-gradient-to-br ${c.c} to-slate-800/50 border border-slate-700 rounded-xl p-5 hover:border-cyan-400 glow transition`}>
+          <div className="text-3xl">{c.icon}</div><div className="font-semibold text-white mt-2">{c.t}</div>
+          <div className="text-xs text-slate-400 font-mono mt-1">{c.f}</div>
+          <div className="text-xs mt-3 text-emerald-300">{prog.read[c.id] ? '✓ Sudah dibaca' : 'Mulai belajar →'}</div>
+        </button>))}
+    </div>
+    <div className="grid sm:grid-cols-2 gap-4">
+      <Card><h3 className="font-semibold text-white">📊 Grafik Interaktif</h3><p className="text-sm text-slate-400 my-2">Ubah parameter dan lihat grafik berubah real-time.</p><Btn onClick={() => go('grafik')}>Buka Grafik</Btn></Card>
+      <Card><h3 className="font-semibold text-white">🧮 Kalkulator Pintar</h3><p className="text-sm text-slate-400 my-2">Hitung f(x), komposisi, dan invers dengan langkah runtut.</p><Btn onClick={() => go('kalkulator')}>Buka Kalkulator</Btn></Card>
+    </div>
+  </>)
+}
+
+function GrafikPanel({ mode }) {
+  const [l, setL] = useState({ a: 2, b: 1 })
+  const [q, setQ] = useState({ a: 1, b: -2, c: -3 })
+  const [pl, setPl] = useState({ c1: 8, c2: 10, p: 3, q: 2 })
+  if (mode === 'linear') {
+    const marks = [{ x: 0, y: l.b }]
+    if (l.a) marks.push({ x: -l.b / l.a, y: 0 })
+    return (<div className="grid lg:grid-cols-2 gap-6 items-start">
+      <Graph curves={[{ t: 'line', ...l }]} marks={marks} />
+      <div className="space-y-4">
+        <Slider label="a (gradien)" value={l.a} min={-5} max={5} step={0.5} onChange={(a) => setL({ ...l, a })} />
+        <Slider label="b (konstanta)" value={l.b} min={-8} max={8} step={0.5} onChange={(b) => setL({ ...l, b })} />
+        <div className="font-mono text-cyan-300">f(x) = {show({ a: 0, b: l.a, c: l.b })}</div>
+        {l.a === 0 && <div className="text-rose-400 text-sm">⚠ Jika a = 0 grafik menjadi garis mendatar (konstanta), bukan fungsi linear.</div>}
+        <table className="w-full text-sm text-center border border-slate-700 rounded-lg overflow-hidden"><thead className="bg-slate-800 text-slate-400"><tr><td className="py-1">x</td>{[-2, -1, 0, 1, 2, 3].map((x) => <td key={x}>{x}</td>)}</tr></thead>
+          <tbody><tr><td className="py-1 text-slate-400">f(x)</td>{[-2, -1, 0, 1, 2, 3].map((x) => <td key={x} className="font-mono text-emerald-300">{fmt(l.a * x + l.b)}</td>)}</tr></tbody></table>
+      </div></div>)
+  }
+  if (mode === 'kuadrat') {
+    const ok = q.a !== 0, xp = ok ? -q.b / (2 * q.a) : 0, yp = ok ? ev(q, xp) : 0
+    const marks = ok ? [{ x: xp, y: yp, label: `puncak (${fmt(xp)}, ${fmt(yp)})` }, { x: 0, y: q.c }] : []
+    return (<div className="grid lg:grid-cols-2 gap-6 items-start">
+      <Graph curves={ok ? [{ t: 'par', ...q }, { t: 'cons', a: 1, b: 0, c: xp, color: '#6366f1' }] : []} marks={marks} />
+      <div className="space-y-4">
+        <Slider label="a" value={q.a} min={-3} max={3} step={0.5} onChange={(a) => setQ({ ...q, a })} />
+        <Slider label="b" value={q.b} min={-8} max={8} step={0.5} onChange={(b) => setQ({ ...q, b })} />
+        <Slider label="c" value={q.c} min={-8} max={8} step={0.5} onChange={(c) => setQ({ ...q, c })} />
+        <div className="font-mono text-cyan-300">f(x) = {show(q)}</div>
+        {ok ? <div className="text-sm text-slate-300 space-y-1"><div>Arah: <b className={q.a > 0 ? 'text-emerald-300' : 'text-rose-300'}>{q.a > 0 ? 'terbuka ke atas' : 'terbuka ke bawah'}</b></div><div>Sumbu simetri: x = {fmt(xp)}</div><div>Titik puncak: ({fmt(xp)}, {fmt(yp)})</div><div>Diskriminan D = {fmt(q.b * q.b - 4 * q.a * q.c)}</div></div>
+          : <div className="text-rose-400 text-sm border border-rose-500/40 rounded-lg p-3">❌ a = 0 tidak valid untuk fungsi kuadrat (a ≠ 0). Ubah nilai a.</div>}
+      </div></div>)
+  }
+  const cons = [{ a: 1, b: 1, c: pl.c1 }, { a: 1, b: 2, c: pl.c2 }]
+  const poly = feasible(cons)
+  const z = poly.map((t) => ({ ...t, z: pl.p * t.x + pl.q * t.y }))
+  const mx = z.length ? Math.max(...z.map((t) => t.z)) : 0, mn = z.length ? Math.min(...z.map((t) => t.z)) : 0
+  return (<div className="grid lg:grid-cols-2 gap-6 items-start">
+    <Graph curves={cons.map((c) => ({ t: 'cons', ...c }))} poly={poly} marks={poly} />
+    <div className="space-y-3">
+      <Slider label="Kendala 1: x + y ≤" value={pl.c1} min={2} max={10} onChange={(c1) => setPl({ ...pl, c1 })} />
+      <Slider label="Kendala 2: x + 2y ≤" value={pl.c2} min={2} max={10} onChange={(c2) => setPl({ ...pl, c2 })} />
+      <Slider label="p (koefisien x)" value={pl.p} min={1} max={6} onChange={(p) => setPl({ ...pl, p })} />
+      <Slider label="q (koefisien y)" value={pl.q} min={1} max={6} onChange={(qq) => setPl({ ...pl, q: qq })} />
+      <div className="font-mono text-cyan-300 text-sm">Z = {pl.p}x + {pl.q}y,  x ≥ 0, y ≥ 0</div>
+      <table className="w-full text-sm border border-slate-700"><thead className="bg-slate-800 text-slate-400"><tr><th>Titik Pojok</th><th>Z</th></tr></thead><tbody>
+        {z.map((t, i) => <tr key={i} className="text-center"><td className="font-mono">({fmt(t.x)}, {fmt(t.y)})</td><td className={`font-mono ${t.z === mx ? 'text-emerald-300 font-bold' : t.z === mn ? 'text-rose-300' : ''}`}>{fmt(t.z)}</td></tr>)}</tbody></table>
+      <div className="text-sm"><span className="text-emerald-300">Maksimum Z = {fmt(mx)}</span> · <span className="text-rose-300">Minimum Z = {fmt(mn)}</span></div>
+    </div></div>)
+}
+
+function Materi({ id, setId, prog, setProg }) {
+  const c = CATS.find((x) => x.id === id)
+  const done = prog.read[id]
+  return (<>
+    <H sub={c.f}>{c.icon} {c.t}</H>
+    <div className="flex gap-2 flex-wrap mb-6">{CATS.map((k) => <button key={k.id} onClick={() => setId(k.id)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${k.id === id ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300' : 'border-slate-700 text-slate-400 hover:border-slate-500'}`}>{k.t}</button>)}</div>
+    <div className="space-y-4 mb-6">{MATERI[id].map(([h, p]) => <Card key={h}><h3 className="font-semibold text-cyan-300 mb-1">{h}</h3><p className="text-slate-300 whitespace-pre-line leading-relaxed">{p}</p></Card>)}</div>
+    {id !== 'komposisi' && <Card className="mb-6"><h3 className="font-semibold text-white mb-4">🔬 Eksplorasi Interaktif</h3><GrafikPanel key={id} mode={id === 'pl' ? 'pl' : id} /></Card>}
+    <div className="flex gap-3 flex-wrap">
+      <Btn onClick={() => setProg((p) => ({ ...p, read: { ...p.read, [id]: true } }))}>{done ? '✓ Sudah Selesai Dibaca' : 'Tandai Selesai'}</Btn>
+    </div>
+  </>)
+}
+
+function Grafik() {
+  const [m, setM] = useState('linear')
+  const tabs = [['linear', 'Linear'], ['kuadrat', 'Kuadrat'], ['pl', 'Garis Kendala']]
+  return (<><H sub="Geser slider dan lihat grafik berubah seketika.">📊 Grafik Interaktif</H>
+    <div className="flex gap-2 mb-5">{tabs.map(([k, t]) => <Ghost key={k} onClick={() => setM(k)} className={m === k ? '!border-cyan-400 !text-cyan-300 bg-cyan-500/10' : ''}>{t}</Ghost>)}</div>
+    <Card><GrafikPanel key={m} mode={m} /></Card></>)
+}
+
+function Kalkulator() {
+  const [f, setF] = useState({ a: 0, b: 1, c: 3 })
+  const [g, setG] = useState({ a: 0, b: 4, c: 5 })
+  const [x, setX] = useState(2)
+  const [op, setOp] = useState('fg')
+  const ops = [['f', 'f(x)'], ['g', 'g(x)'], ['fg', 'f(g(x))'], ['gf', 'g(f(x))'], ['finv', 'f⁻¹(x)']]
+  const { s, r } = hitung(op, f, g, x)
+  const P = ({ n, p, set }) => (<Card><div className="font-semibold text-white mb-3">{n}(x) = ax² + bx + c</div><div className="grid grid-cols-3 gap-2">
+    <Num label="a" value={p.a} onChange={(a) => set({ ...p, a })} /><Num label="b" value={p.b} onChange={(b) => set({ ...p, b })} /><Num label="c" value={p.c} onChange={(c) => set({ ...p, c })} /></div></Card>)
+  return (<><H sub="Isi a = 0 untuk fungsi linear. Perhitungan memakai logika aman (tanpa eval).">🧮 Kalkulator Fungsi Pintar</H>
+    <div className="grid md:grid-cols-2 gap-4 mb-4"><P n="f" p={f} set={setF} /><P n="g" p={g} set={setG} /></div>
+    <Card className="mb-4"><div className="grid sm:grid-cols-2 gap-4 items-end"><Num label="Nilai x" value={x} onChange={setX} />
+      <div className="flex gap-2 flex-wrap">{ops.map(([k, t]) => <Ghost key={k} onClick={() => setOp(k)} className={`!px-3 !py-2 text-sm ${op === k ? '!border-cyan-400 !text-cyan-300 bg-cyan-500/10' : ''}`}>{t}</Ghost>)}</div></div></Card>
+    <Card><h3 className="font-semibold text-white mb-3">Langkah Penyelesaian</h3>
+      <ol className="space-y-2 font-mono text-sm">{s.map((t, i) => <li key={i} className="text-slate-300"><span className="text-indigo-400 mr-2">{i + 1}.</span>{t}</li>)}</ol>
+      <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 font-mono">Hasil akhir = {fmt(r)}</div></Card></>)
+}
+
+function Kuis({ prog, setProg }) {
+  const [cat, setCat] = useState(null), [i, setI] = useState(0), [pick, setPick] = useState(null), [score, setScore] = useState(0), [done, setDone] = useState(false)
+  const qs = cat ? QUIZ[cat] : []
+  const start = (c) => { setCat(c); setI(0); setPick(null); setScore(0); setDone(false) }
+  const answer = (k) => { if (pick !== null) return; setPick(k); if (k === qs[i][2]) setScore((s) => s + 1) }
+  const next = () => {
+    if (i + 1 < qs.length) { setI(i + 1); setPick(null); return }
+    setDone(true)
+    setProg((p) => { const o = p.quiz[cat] || { best: 0 }; return { ...p, quiz: { ...p.quiz, [cat]: { best: Math.max(o.best, score), total: qs.length, tries: (o.tries || 0) + 1 } } } })
+  }
+  if (!cat) return (<><H sub="Pilih kategori untuk memulai latihan.">📝 Latihan & Kuis</H>
+    <div className="grid sm:grid-cols-2 gap-4">{CATS.map((c) => <button key={c.id} onClick={() => start(c.id)} className="text-left bg-slate-800/50 border border-slate-700 rounded-xl p-5 hover:border-cyan-400 glow transition">
+      <div className="text-2xl">{c.icon}</div><div className="font-semibold text-white">{c.t}</div><div className="text-xs text-slate-400 mt-1">{QUIZ[c.id].length} soal · skor terbaik {prog.quiz[c.id] ? `${prog.quiz[c.id].best}/${prog.quiz[c.id].total}` : '-'}</div></button>)}</div></>)
+  if (done) return (<><H>🏁 Hasil Kuis</H><Card className="text-center"><div className="text-5xl font-bold text-cyan-300">{score}/{qs.length}</div>
+    <p className="text-slate-300 my-3">{score === qs.length ? 'Sempurna! 🎉' : score >= qs.length / 2 ? 'Bagus, terus berlatih! 💪' : 'Ayo pelajari materinya lagi 📚'}</p><p className="text-sm text-emerald-300 mb-4">Progres Profil sudah diperbarui otomatis.</p>
+    <div className="flex gap-3 justify-center"><Btn onClick={() => start(cat)}>Ulangi</Btn><Ghost onClick={() => setCat(null)}>Pilih Kategori</Ghost></div></Card></>)
+  const [q, opts, ans, why] = qs[i]
+  return (<><H sub={`${CATS.find((c) => c.id === cat).t} · Soal ${i + 1} dari ${qs.length}`}>📝 Kuis</H>
+    <Card><p className="text-lg text-white mb-4">{q}</p><div className="space-y-2">
+      {opts.map((o, k) => { const st = pick === null ? 'border-slate-700 hover:border-cyan-400' : k === ans ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300' : k === pick ? 'border-rose-500 bg-rose-500/10 text-rose-300' : 'border-slate-700 opacity-50'
+        return <button key={k} onClick={() => answer(k)} className={`w-full text-left px-4 py-3 rounded-xl border transition ${st}`}><span className="font-mono mr-2 text-slate-500">{'ABCD'[k]}.</span>{o}</button> })}</div>
+      {pick !== null && <div className="mt-4"><div className={`font-semibold ${pick === ans ? 'text-emerald-400' : 'text-rose-400'}`}>{pick === ans ? '✓ Benar!' : '✗ Salah'}</div><p className="text-slate-300 text-sm mt-1"><b>Pembahasan:</b> {why}</p><Btn className="mt-4" onClick={next}>{i + 1 < qs.length ? 'Soal Berikutnya →' : 'Lihat Skor'}</Btn></div>}
+    </Card></>)
+}
+
+function Profil({ prog, setProg, reset }) {
+  return (<><H sub="Ringkasan belajarmu tersimpan otomatis di browser (localStorage).">👤 Profil & Progres</H>
+    <Card className="mb-4 max-w-md"><label className="text-sm text-slate-400">Nama panggilan
+      <input value={prog.name} onChange={(e) => setProg({ ...prog, name: e.target.value })} className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-cyan-400" /></label></Card>
+    <div className="grid sm:grid-cols-3 gap-4 mb-4">
+      <Card><div className="text-sm text-slate-400">Progres</div><div className="text-3xl font-bold text-cyan-300">{pct(prog)}%</div></Card>
+      <Card><div className="text-sm text-slate-400">Poin Latihan</div><div className="text-3xl font-bold text-indigo-300">{poin(prog)}</div></Card>
+      <Card><div className="text-sm text-slate-400">Materi Dibaca</div><div className="text-3xl font-bold text-emerald-300">{Object.keys(prog.read).length}/4</div></Card></div>
+    <Card className="mb-4"><h3 className="font-semibold text-white mb-3">Rincian per Kategori</h3><div className="space-y-2">
+      {CATS.map((c) => { const q = prog.quiz[c.id]; return (<div key={c.id} className="flex flex-wrap justify-between gap-2 text-sm border-b border-slate-700/60 pb-2"><span>{c.icon} {c.t}</span>
+        <span className="text-slate-400">{prog.read[c.id] ? <span className="text-emerald-300">✓ dibaca</span> : 'belum dibaca'} · {q ? `skor terbaik ${q.best}/${q.total} (${q.tries}x)` : 'belum kuis'}</span></div>) })}</div></Card>
+    <Ghost className="!border-rose-500/60 !text-rose-300 hover:!bg-rose-500/10" onClick={() => { if (window.confirm('Reset semua progres lokal?')) reset() }}>Reset Progres</Ghost></>)
+}
+
+// ===== App.jsx =====
+
+const NAV = [['dashboard', '🏠', 'Dashboard'], ['materi', '📚', 'Materi'], ['grafik', '📊', 'Grafik Interaktif'], ['kalkulator', '🧮', 'Kalkulator'], ['kuis', '📝', 'Latihan & Kuis'], ['profil', '👤', 'Profil']]
+const INIT = { name: 'Pelajar', read: {}, quiz: {} }
+
+function App() {
+  const [page, setPage] = useState('dashboard')
+  const [cat, setCat] = useState('linear')
+  const [open, setOpen] = useState(false)
+  const [prog, setProg] = useLS('mathgraph-progress', INIT)
+  const go = (p, c) => { setPage(p); if (c) setCat(c); setOpen(false); window.scrollTo(0, 0) }
+  return (
+    <div className="min-h-screen">
+      <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-slate-900/90 backdrop-blur border-b border-slate-700">
+        <button aria-label="Menu" onClick={() => setOpen(!open)} className="text-2xl text-cyan-300">☰</button>
+        <span className="font-bold text-white">Math<span className="text-cyan-400">Graph</span></span>
+      </header>
+      {open && <div className="lg:hidden fixed inset-0 z-30 bg-black/60" onClick={() => setOpen(false)} />}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900/95 backdrop-blur border-r border-slate-700 p-5 transition-transform lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="text-2xl font-bold text-white mb-1">Math<span className="text-cyan-400">Graph</span></div>
+        <div className="text-xs text-slate-500 mb-8">Belajar matematika interaktif</div>
+        <nav className="space-y-1">{NAV.map(([k, i, t]) => (
+          <button key={k} onClick={() => go(k)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition ${page === k ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:bg-slate-800 border border-transparent'}`}><span>{i}</span>{t}</button>))}</nav>
+      </aside>
+      <main className="lg:ml-64 p-4 md:p-8 max-w-6xl">
+        {page === 'dashboard' && <Dashboard prog={prog} go={go} />}
+        {page === 'materi' && <Materi id={cat} setId={setCat} prog={prog} setProg={setProg} />}
+        {page === 'grafik' && <Grafik />}
+        {page === 'kalkulator' && <Kalkulator />}
+        {page === 'kuis' && <Kuis prog={prog} setProg={setProg} />}
+        {page === 'profil' && <Profil prog={prog} setProg={setProg} reset={() => setProg(INIT)} />}
+      </main>
+    </div>
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
